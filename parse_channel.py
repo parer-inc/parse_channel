@@ -2,7 +2,7 @@
 import os
 import time
 from rq import Worker, Queue, Connection
-from methods.connection import get_redis, get_cursor, await_job
+from methods.connection import get_redis, await_job
 from pyyoutube import Api
 from selenium import webdriver
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
@@ -23,14 +23,15 @@ def parse_channel(id):
     data = None
     if channel_by_id.items is not None:
         data = channel_by_id.items[0].to_dict()
-
-    print(data)
+    if data is None:
+        # log
+        return False
     # GET ALL CHANNEL VIDEOS USING selenium
-    #q = Queue('create_tmp_table', connection=r)
-    #job = q.enqueue('create_tmp_table.create_tmp_table', id+"_tmp")
-    #await_job(job)
-    #if not job.result:
-    #    return False  # Not sure
+    q = Queue('create_tmp_table', connection=r)
+    job = q.enqueue('create_tmp_table.create_tmp_table', id+"_tmp")
+    await_job(job)
+    if not job.result:
+        return False
     driver.get(YOUTUBE_URL + id + "/videos")
     time.sleep(5)
     height = driver.execute_script("return document.documentElement.scrollHeight")
@@ -38,22 +39,22 @@ def parse_channel(id):
     vids = int( int(data['statistics']['videoCount']) / 35)  # videos on one page
     try:
         while True:
-            prev_ht=driver.execute_script("return document.documentElement.scrollHeight;")
+            prev_ht = driver.execute_script("return document.documentElement.scrollHeight;")
             driver.execute_script("window.scrollTo(0, " + str(height) + ");")
-            time.sleep(4)
+            time.sleep(3)
             height = driver.execute_script("return document.documentElement.scrollHeight")
             if prev_ht == height:
                 break
     except Exception as e:
-        print(e) # LOG
+        print(e)  # LOG
     try:
         links = driver.find_elements_by_xpath('//*[@id="video-title"]')
         for i in links:
             link = (i.get_attribute('href'))
             print(link)
-        q.enqueue('write_tmp_table.write_tmp_table', link, id+"_tmp")
+            q.enqueue('write_tmp_table.write_tmp_table', link, id+"_tmp")
     except Exception as e:
-        print(e) # LOG
+        print(e)  # LOG
 
     data = [data['id'], data['snippet']['title'], data['snippet']['description'],
             data['snippet']['customUrl'], data['snippet']['publishedAt'],
