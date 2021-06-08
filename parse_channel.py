@@ -1,4 +1,4 @@
-"""This service allows to write new channels to db"""
+"""This service allows to prase channels info"""
 import os
 import time
 from rq import Worker, Queue, Connection
@@ -13,7 +13,7 @@ desired_capabilities=DesiredCapabilities.CHROME)
 
 YOUTUBE_URL = "https://www.youtube.com/channel/"
 api = Api(api_key=os.environ['YOUTUBE_TOKEN'])
-
+r = get_redis()
 
 def parse_channel(id):
     """Parses a channel"""
@@ -35,12 +35,14 @@ def parse_channel(id):
     time.sleep(5)
     height = driver.execute_script("return document.documentElement.scrollHeight")
     q = Queue('write_tmp_table', connection=r)
+    print("Parsing")
     try:
         while True:
             prev_ht = driver.execute_script("return document.documentElement.scrollHeight;")
             driver.execute_script("window.scrollTo(0, " + str(height) + ");")
             time.sleep(3)
             height = driver.execute_script("return document.documentElement.scrollHeight")
+            print("done loop")
             if prev_ht == height:
                 break
     except Exception as e:
@@ -65,8 +67,6 @@ def parse_channel(id):
 
 
 if __name__ == '__main__':
-    time.sleep(5)
-    r = get_redis()
     q = Queue('parse_channel', connection=r)
     with Connection(r):
         worker = Worker([q], connection=r,  name='parse_channel')
