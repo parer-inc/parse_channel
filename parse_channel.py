@@ -13,7 +13,6 @@ desired_capabilities=DesiredCapabilities.CHROME)
 
 YOUTUBE_URL = "https://www.youtube.com/channel/"
 api = Api(api_key=os.environ['YOUTUBE_TOKEN'])
-r = get_redis()
 
 
 def parse_channel(id):
@@ -36,7 +35,6 @@ def parse_channel(id):
     time.sleep(5)
     height = driver.execute_script("return document.documentElement.scrollHeight")
     q = Queue('write_tmp_table', connection=r)
-    vids = int( int(data['statistics']['videoCount']) / 35)  # videos on one page
     try:
         while True:
             prev_ht = driver.execute_script("return document.documentElement.scrollHeight;")
@@ -51,6 +49,7 @@ def parse_channel(id):
         links = driver.find_elements_by_xpath('//*[@id="video-title"]')
         for i in links:
             link = (i.get_attribute('href'))
+            link = link.split("watch?v=")[-1]
             print(link)
             q.enqueue('write_tmp_table.write_tmp_table', link, id+"_tmp")
     except Exception as e:
