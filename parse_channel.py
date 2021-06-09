@@ -37,7 +37,7 @@ def parse_channel(id):
     q = Queue('write_tmp_table', connection=r)
     print("Parsing")
     try:
-        while True:
+        for i in range(1):#while True:
             prev_ht = driver.execute_script("return document.documentElement.scrollHeight;")
             driver.execute_script("window.scrollTo(0, " + str(height) + ");")
             time.sleep(3)
