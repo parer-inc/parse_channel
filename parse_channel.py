@@ -1,21 +1,32 @@
 """This service allows to prase channels info"""
 import os
-import time
+import re
+import json
+import requests
 from rq import Worker, Queue, Connection
 from methods.connection import get_redis, await_job
 from pyyoutube import Api
-from selenium import webdriver
-from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 
-driver = webdriver.Remote(
-command_executor='http://chromedriver:4444/wd/hub',
-desired_capabilities=DesiredCapabilities.CHROME)
-
-YOUTUBE_URL = "https://www.youtube.com/channel/"
 api = Api(api_key=os.environ['YOUTUBE_TOKEN'])
 r = get_redis()
 
-def parse_channel(id):
+
+def get_init_data(url):
+    resp_txt = requests.get(url).text
+    API_KEY = resp_txt.split('"INNERTUBE_API_KEY":"', 1)[-1].split('"', 1)[0]
+    API_VERSION = resp_txt.split(
+        'client.version\\x3d', 1)[-1].split("')", 1)[0]
+    token = re.search(r'"token":"(.*?)"', resp_txt).groups()[0]
+    params = (
+        ('key', API_KEY),
+    )
+    resp = resp_txt.split('var ytInitialData = ',
+                          1)[-1].split(';</script>', 1)[0]
+    resp = json.loads(resp)
+    return API_VERSION, params, token, resp
+
+
+def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
     """Parses a channel"""
     # GET CHANNEL DATA USING API
     channel_by_id = api.get_channel_info(channel_id=id)
@@ -26,36 +37,47 @@ def parse_channel(id):
         # log
         return False
     # GET ALL CHANNEL VIDEOS USING selenium
+
     q = Queue('create_tmp_table', connection=r)
     job = q.enqueue('create_tmp_table.create_tmp_table', id+"_tmp")
     await_job(job)
     if not job.result:
         return False
-    driver.get(YOUTUBE_URL + id + "/videos")
-    time.sleep(5)
-    height = driver.execute_script("return document.documentElement.scrollHeight")
     q = Queue('write_tmp_table', connection=r)
     print("Parsing")
-    try:
-        for i in range(1):#while True:
-            prev_ht = driver.execute_script("return document.documentElement.scrollHeight;")
-            driver.execute_script("window.scrollTo(0, " + str(height) + ");")
-            time.sleep(3)
-            height = driver.execute_script("return document.documentElement.scrollHeight")
-            print("done loop")
-            if prev_ht == height:
-                break
-    except Exception as e:
-        print(e)  # LOG
-    try:
-        links = driver.find_elements_by_xpath('//*[@id="video-title"]')
-        for i in links:
-            link = (i.get_attribute('href'))
-            link = link.split("watch?v=")[-1]
-            print(link)
-            q.enqueue('write_tmp_table.write_tmp_table', link, id+"_tmp")
-    except Exception as e:
-        print(e)  # LOG
+    url = f"https://www.youtube.com/channel/{id}/videos"
+    start = True
+    params, resp, token = None, None, None
+    continuationheaders = {"x-youtube-client-name": "1",
+                           "x-youtube-client-version": None, "Accept-Language": "en-US"}
+    data = {"context": {"client": {"hl": "en", "gl": "US",
+                                   "clientName": "WEB", "clientVersion": None}, "originalUrl": url}}
+    while True:
+        if start:
+            API_VERSION, params, token, resp = get_init_data(url)
+            continuationheaders["x-youtube-client-version"] = API_VERSION
+            data["context"]["client"]["clientVersion"] = API_VERSION
+            resp = resp['contents']['twoColumnBrowseResultsRenderer']['tabs'][1]['tabRenderer']['content'][
+                'sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents'][0]['gridRenderer']['items']
+            start = False
+        else:
+            resp = requests.post(
+                "https://www.youtube.com/youtubei/v1/browse", params=params, json=data)
+            resp = json.loads(resp.text)
+            resp = resp['onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
+        token = resp[-1]
+        vid_threads = resp[:-1]
+        for vid in vid_threads:
+            video_id = vid['gridVideoRenderer']['videoId']
+            try:
+                q.enqueue('write_tmp_table.write_tmp_table', video_id, id+"_tmp")
+            except Exception as e:
+                print(e)  # LOG
+        try:
+            token = token['continuationItemRenderer']['continuationEndpoint']['continuationCommand']['token']
+            data["continuation"] = token
+        except Exception:
+            break
 
     data = [data['id'], data['snippet']['title'], data['snippet']['description'],
             data['snippet']['customUrl'], data['snippet']['publishedAt'],
