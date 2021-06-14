@@ -1,6 +1,5 @@
 """This service allows to prase channels info"""
 import os
-import re
 import json
 import requests
 from rq import Worker, Queue, Connection
@@ -12,18 +11,18 @@ r = get_redis()
 
 
 def get_init_data(url):
+    """Returns response and needed data from first request"""
     resp_txt = requests.get(url).text
     API_KEY = resp_txt.split('"INNERTUBE_API_KEY":"', 1)[-1].split('"', 1)[0]
     API_VERSION = resp_txt.split(
         'client.version\\x3d', 1)[-1].split("')", 1)[0]
-    token = re.search(r'"token":"(.*?)"', resp_txt).groups()[0]
     params = (
         ('key', API_KEY),
     )
     resp = resp_txt.split('var ytInitialData = ',
                           1)[-1].split(';</script>', 1)[0]
     resp = json.loads(resp)
-    return API_VERSION, params, token, resp
+    return API_VERSION, params, resp
 
 
 def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
@@ -33,10 +32,10 @@ def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
     data = None
     if channel_by_id.items is not None:
         data = channel_by_id.items[0].to_dict()
-    if data is None:
+    if data is None or str(data['statistics']['videoCount']) == "0":
         # log
         return False
-    # GET ALL CHANNEL VIDEOS USING selenium
+    # GET ALL CHANNEL VIDEOS
 
     q = Queue('create_tmp_table', connection=r)
     job = q.enqueue('create_tmp_table.create_tmp_table', id+"_tmp")
@@ -50,19 +49,19 @@ def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
     params, resp, token = None, None, None
     continuationheaders = {"x-youtube-client-name": "1",
                            "x-youtube-client-version": None, "Accept-Language": "en-US"}
-    data = {"context": {"client": {"hl": "en", "gl": "US",
-                                   "clientName": "WEB", "clientVersion": None}, "originalUrl": url}}
+    api_data= {"context": {"client": {"hl": "en", "gl": "US",
+                "clientName": "WEB", "clientVersion": None}, "originalUrl": url}}
     while True:
         if start:
-            API_VERSION, params, token, resp = get_init_data(url)
+            API_VERSION, params, resp = get_init_data(url)
             continuationheaders["x-youtube-client-version"] = API_VERSION
-            data["context"]["client"]["clientVersion"] = API_VERSION
+            api_data["context"]["client"]["clientVersion"] = API_VERSION
             resp = resp['contents']['twoColumnBrowseResultsRenderer']['tabs'][1]['tabRenderer']['content'][
                 'sectionListRenderer']['contents'][0]['itemSectionRenderer']['contents'][0]['gridRenderer']['items']
             start = False
         else:
             resp = requests.post(
-                "https://www.youtube.com/youtubei/v1/browse", params=params, json=data)
+                "https://www.youtube.com/youtubei/v1/browse", params=params, json=api_data)
             resp = json.loads(resp.text)
             resp = resp['onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
         token = resp[-1]
@@ -75,7 +74,7 @@ def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
                 print(e)  # LOG
         try:
             token = token['continuationItemRenderer']['continuationEndpoint']['continuationCommand']['token']
-            data["continuation"] = token
+            api_data["continuation"] = token
         except Exception:
             break
 
