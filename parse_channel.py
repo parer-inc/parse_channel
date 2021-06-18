@@ -32,18 +32,17 @@ def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
     data = None
     if channel_by_id.items is not None:
         data = channel_by_id.items[0].to_dict()
-    if data is None or str(data['statistics']['videoCount']) == "0":
+    if data is None:
         # log
         return False
     # GET ALL CHANNEL VIDEOS
-
     q = Queue('create_tmp_table', connection=r)
     job = q.enqueue('create_tmp_table.create_tmp_table', id+"_tmp")
     await_job(job)
     if not job.result:
+        # LOG
         return False
     q = Queue('write_tmp_table', connection=r)
-    print("Parsing")
     url = f"https://www.youtube.com/channel/{id}/videos"
     start = True
     params, resp, token = None, None, None
@@ -51,7 +50,7 @@ def parse_channel(id):  # "UCXuqSBlHAE6Xw-yeJA0Tunw" "UCIIDymHgUB6wD91-h8wlZdQ"
                            "x-youtube-client-version": None, "Accept-Language": "en-US"}
     api_data= {"context": {"client": {"hl": "en", "gl": "US",
                 "clientName": "WEB", "clientVersion": None}, "originalUrl": url}}
-    while True:
+    while True and str(data['statistics']['videoCount']) != "0":
         if start:
             API_VERSION, params, resp = get_init_data(url)
             continuationheaders["x-youtube-client-version"] = API_VERSION
